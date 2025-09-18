@@ -8,7 +8,7 @@ CORS(app)
 
 # Definir ruta relativa a la carpeta actual
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.join(BASE_DIR, "data", "productos.xlsx")
+file_path = os.path.join(BASE_DIR, "productos.xlsx")
 
 # Leer Excel
 df = pd.read_excel(file_path, sheet_name="Precios medianos por cadena")
