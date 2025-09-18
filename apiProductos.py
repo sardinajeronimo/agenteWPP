@@ -1,25 +1,30 @@
 from flask import Flask, jsonify, request
 import pandas as pd
 from flask_cors import CORS
-
+import os
 
 app = Flask(__name__)
 CORS(app)
 
+# Definir ruta relativa a la carpeta actual
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(BASE_DIR, "data", "productos.xlsx")
 
-file_path = "/Users/jeronimo/Downloads/cadenas_julio_2025 (1).xlsx"
+# Leer Excel
 df = pd.read_excel(file_path, sheet_name="Precios medianos por cadena")
 
-
+# Convertir a formato largo
 df_long = df.melt(
     id_vars=["grupo", "nombre_producto"],
     var_name="supermercado",
     value_name="precio"
 ).dropna()
 
-
 productos = df_long.to_dict(orient="records")
 
+# ======================
+# Rutas API
+# ======================
 @app.route("/productos", methods=["GET"])
 def get_all():
     return jsonify(productos), 200
