@@ -1,0 +1,33 @@
+# Entornos virtuales
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# Configuración de sistema
+.DS_Store
+*.swp
+
+# Logs y archivos temporales
+*.log
+*.tmp
+
+# Archivos de base de datos locales
+*.sqlite3
+
+# Archivos de testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Redis (si genera dumps locales)
+dump.rdb
+
+# Entornos de desarrollo
+.idea/
+.vscode/
+
+# Archivos grandes de datos (ejemplo CSV si no querés versionarlos)
+*.csv
+

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Agente Recetas</title>
+  <style>
+    body {
+      background: #e5ddd5;
+      font-family: "Arial", sans-serif;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px;
+      background: #ece5dd;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .bubble {
+      max-width: 70%;
+      padding: 10px;
+      border-radius: 8px;
+      margin: 5px 0;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+
+    .user {
+      align-self: flex-end;
+      background: #dcf8c6;
+    }
+
+    .chef {
+      align-self: flex-start;
+      background: #fff;
+    }
+
+    #inputBar {
+      display: flex;
+      padding: 10px;
+      background: #f0f0f0;
+    }
+
+    #mensaje, #nombre, #numero {
+      flex: 1;
+      border: none;
+      border-radius: 20px;
+      padding: 10px;
+      margin-right: 5px;
+      font-size: 14px;
+    }
+
+    #nombre, #numero {
+      max-width: 120px;
+    }
+
+    button {
+      background: #25d366;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #extraButtons {
+      display: flex;
+      gap: 10px;
+      padding: 5px;
+      background: #f0f0f0;
+      justify-content: center;
+    }
+
+    #extraButtons button {
+      border-radius: 8px;
+      padding: 8px 12px;
+      width: auto;
+      height: auto;
+      background: #128c7e;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+
+  <div id="inputBar">
+    <input type="text" id="nombre" placeholder="Nombre">
+    <input type="text" id="numero" placeholder="ID">
+    <input type="text" id="mensaje" placeholder="Escribí tu receta...">
+    <button id="enviar">➤</button>
+  </div>
+
+  <div id="extraButtons">
+    <button id="listarPedidos">Listar</button>
+    <button id="borrarPedidos">Borrar</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const inputNombre = document.getElementById("nombre");
+    const inputNumero = document.getElementById("numero");
+    const inputMensaje = document.getElementById("mensaje");
+
+    let recetaActual = null;
+    let usuarioActual = "";
+
+    function addBubble(sender, text) {
+      const div = document.createElement("div");
+      div.className = "bubble " + (sender === "Usuario" ? "user" : "chef");
+      div.innerText = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // Enviar mensaje: pedir receta
+    document.getElementById("enviar").addEventListener("click", async () => {
+      const data = {
+        nombre: inputNombre.value || "Usuario",
+        numero: inputNumero.value || "0",
+        mensaje: inputMensaje.value || "Cualquier receta"
+      };
+
+      usuarioActual = data.numero;
+      addBubble("Usuario", data.mensaje);
+      inputMensaje.value = "";
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/generate-recipe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        });
+
+        const result = await res.json();
+
+        if (result.success) {
+          recetaActual = result;
+          addBubble("Chef", result.receta);
+          addBubble("Chef", "¿Querés hacer el pedido? Escribí 'tienda inglesa' o 'disco'.");
+        } else {
+          addBubble("Chef", "⚠️ No se pudo generar la receta.");
+        }
+      } catch (err) {
+        addBubble("Chef", "⚠️ Error generando receta: " + err.message);
+      }
+    });
+
+    // Escuchar respuesta del usuario (supermercado para pedido)
+    inputMensaje.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        const opcion = inputMensaje.value.trim().toLowerCase();
+
+        if (recetaActual && (opcion === "disco" || opcion === "tienda inglesa")) {
+          addBubble("Usuario", opcion);
+          inputMensaje.value = "";
+
+          const pedido = {
+            supermercado: opcion,
+            usuario: usuarioActual,
+            productos: recetaActual.productos
+          };
+
+          try {
+            const res = await fetch("http://127.0.0.1:8000/make-order", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(pedido)
+            });
+
+            const result = await res.json();
+
+            if (result.success) {
+              addBubble("Chef", `✅ Pedido enviado a ${opcion}. Total: $${result.total}`);
+              recetaActual = null; // reset
+            } else {
+              addBubble("Chef", "❌ Error enviando pedido.");
+            }
+          } catch (err) {
+            addBubble("Chef", "⚠️ Error de conexión: " + err.message);
+          }
+
+          return; // detener acá para no pedir nueva receta
+        }
+      }
+    });
+
+    // Listar pedidos
+    document.getElementById("listarPedidos").addEventListener("click", async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:5001/pedidos");
+        const result = await res.json();
+
+        if (result.length === 0) {
+          addBubble("Chef", "📋 No hay pedidos guardados.");
+          return;
+        }
+
+        result.forEach((p, i) => {
+          const productos = Array.isArray(p.productos) ? p.productos : [];
+          let detalle = `Pedido ${i + 1} (${p.supermercado || "sin supermercado"}, Usuario: ${p.usuario})\n` +
+                        productos.map(x => `- ${(x.nombre || x.nombre_producto)} $${x.precio}`).join("\n");
+          addBubble("Chef", detalle);
+        });
+      } catch (err) {
+        addBubble("Chef", "⚠️ Error listando pedidos: " + err.message);
+      }
+    });
+
+    // Borrar pedidos
+    document.getElementById("borrarPedidos").addEventListener("click", async () => {
+      if (!confirm("¿Seguro que querés borrar todos los pedidos?")) return;
+
+      try {
+        const res = await fetch("http://127.0.0.1:5001/pedidos", { method: "DELETE" });
+        if (res.status === 200) {
+          addBubble("Chef", "🗑️ Todos los pedidos eliminados.");
+        }
+      } catch (err) {
+        addBubble("Chef", "⚠️ Error borrando pedidos: " + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

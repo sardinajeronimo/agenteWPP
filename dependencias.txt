@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+openai
+rapidfuzz
+python-dotenv
+
