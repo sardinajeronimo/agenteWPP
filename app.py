@@ -35,6 +35,7 @@ class OrderRequest(BaseModel):
     productos: dict 
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mitokenverificacion")
+API_URL_PEDIDOS = os.getenv("API_URL_PEDIDOS", "http://127.0.0.1:5001/pedidos")
 
 # 🔹 memoria temporal para guardar productos por usuario
 user_sessions = {}
@@ -53,7 +54,10 @@ async def generate_recipe(request: RecipeRequest):
         receta, productos = generar_receta(nombre, request.mensaje, return_productos=True)
 
         # guardar productos en sesión
-        user_sessions[request.numero] = productos
+        user_sessions[request.numero] = {
+            "nombre": nombre,
+            "productos": productos
+        }
 
         return {
             "success": True,
@@ -69,6 +73,7 @@ async def make_order(request: OrderRequest):
     try:
         supermercado = request.supermercado.lower()
 
+        # ✅ Filtrar solo los productos del supermercado elegido
         if supermercado == "disco":
             productos_final = request.productos.get("disco", [])
         elif supermercado == "tienda inglesa":
@@ -77,21 +82,23 @@ async def make_order(request: OrderRequest):
             raise HTTPException(status_code=400, detail="Supermercado no válido")
 
         if not productos_final:
-            raise HTTPException(status_code=400, detail="No hay productos en el pedido")
+            raise HTTPException(status_code=400, detail="No hay productos en el pedido para este supermercado")
 
         pedido_data = {
             "usuario": request.usuario,
             "supermercado": supermercado,
-            "productos": productos_final,
+            "productos": productos_final,   # ✅ solo del super elegido
         }
 
-        response = requests.post(os.getenv("API_URL_PEDIDOS"), json=pedido_data)
+        print("📤 Enviando pedido:", pedido_data)  # debug
+
+        response = requests.post(API_URL_PEDIDOS, json=pedido_data)
 
         if response.status_code in [200, 201]:
             total = sum(p["precio_total"] for p in productos_final)
             return {
                 "success": True,
-                "message": f"✅ Pedido enviado a {supermercado}",
+                "message": f"Pedido enviado correctamente a {supermercado}",
                 "productos": productos_final,
                 "total": round(total, 2),
                 "supermercado": supermercado
@@ -99,6 +106,8 @@ async def make_order(request: OrderRequest):
         else:
             raise HTTPException(status_code=500, detail="Error enviando pedido a la API")
 
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Error de conexión con la API de pedidos")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando pedido: {str(e)}")
 
@@ -159,18 +168,30 @@ async def webhook(request: Request):
                     productos = session["productos"]
                     usuario = session["nombre"]
 
-                    if button_id in ["disco", "tienda_inglesa"]:
+                    # ✅ Filtrar productos según el botón
+                    if button_id == "disco":
+                        productos_final = productos.get("disco", [])
+                    elif button_id == "tienda_inglesa":
+                        productos_final = productos.get("tienda_inglesa", [])
+                    else:
+                        productos_final = []
+
+                    if productos_final:
                         pedido_data = {
                             "supermercado": button_id,
                             "usuario": usuario,
-                            "productos": productos
+                            "productos": productos_final
                         }
-                        response = requests.post(os.getenv("API_URL_PEDIDOS"), json=pedido_data)
+                        print("📤 Enviando pedido (botón):", pedido_data)
+
+                        response = requests.post(API_URL_PEDIDOS, json=pedido_data)
 
                         if response.status_code in [200, 201]:
                             reply_whatsapp(from_number, f"✅ Pedido enviado a {button_id}, {usuario}!")
                         else:
                             reply_whatsapp(from_number, "❌ Error al enviar el pedido")
+                    else:
+                        reply_whatsapp(from_number, "⚠️ No encontré productos para este supermercado")
 
     except Exception as e:
         print("⚠️ Error procesando webhook:", e)
@@ -186,5 +207,5 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    print("🍳 Iniciando Chef Virtual API...")
+    print(" Iniciando Chef Virtual API...")
     uvicorn.run(app, host="127.0.0.1", port=8000)
