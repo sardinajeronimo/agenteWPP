@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("WHATSAPP_TOKEN")         # Token de acceso de Meta
-PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")   # ID del número de WhatsApp Business
+PHONE_ID = 876156402242406 # ID del número de WhatsApp Business
 
-GRAPH_URL = f"https://graph.facebook.com/v17.0/{PHONE_ID}/messages"
+GRAPH_URL = f"https://graph.facebook.com/v17.0/876156402242406/messages"
 
 
 # ==========================
