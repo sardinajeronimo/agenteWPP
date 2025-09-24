@@ -9,7 +9,7 @@ import requests
 import os, json
 
 
-app = FastAPI(title="Chef Virtual API", version="3.0.0")
+app = FastAPI(title="Chef Virtual API", version="3.1.0")
 
 # ==========================
 # CORS
@@ -159,10 +159,22 @@ async def webhook(request: Request):
                     return {"status": "ok"}
 
                 if text == "cancelar":
+                    # 🔹 Borrar sesión en memoria
                     user_sessions.pop(from_number, None)
-                    reply_whatsapp(from_number, "❌ Pedido cancelado. Podés pedirme otra receta cuando quieras.")
+
+                    # 🔹 DELETE en el endpoint de pedidos (borra todo por simplicidad)
+                    try:
+                        resp = requests.delete(API_URL_PEDIDOS, timeout=5)
+                        if resp.status_code == 200:
+                            reply_whatsapp(from_number, "❌ Pedido cancelado y eliminado del sistema.")
+                        else:
+                            reply_whatsapp(from_number, "⚠️ No se pudo eliminar el pedido en la API.")
+                    except Exception as e:
+                        reply_whatsapp(from_number, f"💥 Error al cancelar en API: {e}")
+
                     return {"status": "ok"}
 
+                # 🔹 Generar receta normal
                 receta, productos = generar_receta(profile_name, text, return_productos=True)
                 user_sessions[from_number] = {"nombre": profile_name, "productos": productos}
                 reply_whatsapp(from_number, receta)
@@ -232,5 +244,5 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    print(" Iniciando Chef Virtual API...")
+    print("🚀 Iniciando Chef Virtual API...")
     uvicorn.run(app, host="127.0.0.1", port=8000)
