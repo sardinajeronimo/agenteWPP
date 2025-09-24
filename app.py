@@ -6,7 +6,8 @@ from ai import generar_receta
 from usuarios import get_nombre
 from whatsapp import reply_whatsapp, enviar_botones
 import requests
-import os
+import os, json
+
 
 app = FastAPI(title="Chef Virtual API", version="3.0.0")
 
@@ -73,7 +74,6 @@ async def make_order(request: OrderRequest):
     try:
         supermercado = request.supermercado.lower()
 
-        # ✅ Filtrar solo los productos del supermercado elegido
         if supermercado == "disco":
             productos_final = request.productos.get("disco", [])
         elif supermercado == "tienda inglesa":
@@ -87,15 +87,23 @@ async def make_order(request: OrderRequest):
         pedido_data = {
             "usuario": request.usuario,
             "supermercado": supermercado,
-            "productos": productos_final,   # ✅ solo del super elegido
+            "productos": productos_final,
         }
 
-        print("📤 Enviando pedido:", pedido_data)  # debug
+        print("📤 Enviando pedido:", pedido_data)
 
         response = requests.post(API_URL_PEDIDOS, json=pedido_data)
 
         if response.status_code in [200, 201]:
             total = sum(p["precio_total"] for p in productos_final)
+
+            # ✅ Guardar confirmados en la sesión
+            user_sessions[request.usuario] = {
+                "nombre": request.usuario,
+                "productos": {supermercado: productos_final},
+                "confirmados": {supermercado: productos_final}
+            }
+
             return {
                 "success": True,
                 "message": f"Pedido enviado correctamente a {supermercado}",
@@ -130,52 +138,62 @@ async def verify_webhook(request: Request):
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-    print("📩 Mensaje recibido:", data)
+    print("📩 Payload recibido:", json.dumps(data, indent=2, ensure_ascii=False))
 
     try:
-        entry = data["entry"][0]["changes"][0]["value"]
+        entry = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
 
-        # ✅ Caso 1: mensaje de texto normal
         if "messages" in entry:
             message = entry["messages"][0]
-            from_number = message["from"]
-            profile_name = entry["contacts"][0]["profile"]["name"]
-            
-            if message["type"] == "text":
-                text = message["text"]["body"]
+            from_number = message.get("from")
+            profile_name = entry.get("contacts", [{}])[0].get("profile", {}).get("name", "Usuario")
 
-                # Generar receta
+            # 📝 Texto
+            if message.get("type") == "text":
+                text = message["text"].get("body", "").strip().lower()
+                print(f"👤 {profile_name} ({from_number}) dijo: {text}")
+
+                saludos = ["hola", "buenas", "qué tal", "buen día", "buenas tardes", "buenas noches"]
+                if text in saludos:
+                    reply_whatsapp(from_number, f"👋 Hola {profile_name}! Soy tu Chef Virtual 🤖🍳. Pedime una receta y te ayudo.")
+                    return {"status": "ok"}
+
+                if text == "cancelar":
+                    user_sessions.pop(from_number, None)
+                    reply_whatsapp(from_number, "❌ Pedido cancelado. Podés pedirme otra receta cuando quieras.")
+                    return {"status": "ok"}
+
                 receta, productos = generar_receta(profile_name, text, return_productos=True)
-
-                # Guardar productos en sesión
-                user_sessions[from_number] = {
-                    "nombre": profile_name,
-                    "productos": productos
-                }
-
-                # Responder receta
+                user_sessions[from_number] = {"nombre": profile_name, "productos": productos}
                 reply_whatsapp(from_number, receta)
+                enviar_botones(from_number, "¿Querés hacer el pedido ahora?")
 
-                # Enviar botones
-                enviar_botones(from_number, "¿Querés hacer el pedido en Disco o Tienda Inglesa?")
-
-            # ✅ Caso 2: usuario aprieta un botón
-            elif message["type"] == "interactive":
+            elif message.get("type") == "interactive":
                 button_id = message["interactive"]["button_reply"]["id"]
                 session = user_sessions.get(from_number)
 
-                if session:
-                    productos = session["productos"]
-                    usuario = session["nombre"]
+                if not session:
+                    reply_whatsapp(from_number, "⚠️ No tengo productos guardados para tu sesión. Pedime una receta primero.")
+                    return {"status": "ok"}
 
-                    # ✅ Filtrar productos según el botón
-                    if button_id == "disco":
-                        productos_final = productos.get("disco", [])
-                    elif button_id == "tienda_inglesa":
-                        productos_final = productos.get("tienda_inglesa", [])
-                    else:
-                        productos_final = []
+                productos = session["productos"]
+                usuario = session["nombre"]
 
+                if button_id == "listar":
+                    if "confirmados" not in session:
+                        reply_whatsapp(from_number, "⚠️ Aún no hiciste un pedido, no hay nada para listar.")
+                        return {"status": "ok"}
+
+                    listado = []
+                    for super, items in session["confirmados"].items():
+                        listado.append(f"🏪 {super.upper()}:")
+                        for p in items:
+                            listado.append(f" - {p['nombre']} ({p['cantidad']}) (${p['precio_total']})")
+                    reply_whatsapp(from_number, "\n".join(listado))
+                    return {"status": "ok"}
+
+                elif button_id in ["disco", "tienda_inglesa"]:
+                    productos_final = productos.get(button_id, [])
                     if productos_final:
                         pedido_data = {
                             "supermercado": button_id,
@@ -183,15 +201,22 @@ async def webhook(request: Request):
                             "productos": productos_final
                         }
                         print("📤 Enviando pedido (botón):", pedido_data)
-
                         response = requests.post(API_URL_PEDIDOS, json=pedido_data)
 
                         if response.status_code in [200, 201]:
+                            # ✅ Guardamos confirmados
+                            session["confirmados"] = {button_id: productos_final}
                             reply_whatsapp(from_number, f"✅ Pedido enviado a {button_id}, {usuario}!")
                         else:
                             reply_whatsapp(from_number, "❌ Error al enviar el pedido")
                     else:
                         reply_whatsapp(from_number, "⚠️ No encontré productos para este supermercado")
+
+        elif "statuses" in entry:
+            print("ℹ️ Evento de estado:", json.dumps(entry["statuses"], indent=2, ensure_ascii=False))
+
+        else:
+            print("⚠️ Evento no reconocido:", json.dumps(entry, indent=2, ensure_ascii=False))
 
     except Exception as e:
         print("⚠️ Error procesando webhook:", e)

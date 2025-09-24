@@ -2,9 +2,7 @@ import requests
 import os
 from dotenv import load_dotenv
 
-# ==========================
-# CARGAR VARIABLES DEL ENTORNO
-# ==========================
+
 load_dotenv()
 
 TOKEN = os.getenv("WHATSAPP_TOKEN")         # Token de acceso de Meta
@@ -12,14 +10,8 @@ PHONE_ID = 876156402242406 # ID del número de WhatsApp Business
 
 GRAPH_URL = f"https://graph.facebook.com/v17.0/876156402242406/messages"
 
-
-# ==========================
-# ENVIAR MENSAJE DE TEXTO
-# ==========================
 def reply_whatsapp(to: str, body: str):
-    """
-    Envía un mensaje de texto simple a WhatsApp.
-    """
+   
     headers = {
         "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "application/json"
@@ -33,14 +25,8 @@ def reply_whatsapp(to: str, body: str):
     print("📤 Texto enviado:", r.status_code, r.text)
     return r
 
-
-# ==========================
-# ENVIAR BOTONES INTERACTIVOS
-# ==========================
 def enviar_botones(to: str, pregunta: str):
-    """
-    Envía un mensaje con botones interactivos (Disco / Tienda Inglesa).
-    """
+  
     headers = {
         "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "application/json"
@@ -60,7 +46,11 @@ def enviar_botones(to: str, pregunta: str):
                     },
                     {
                         "type": "reply",
-                        "reply": {"id": "tienda_inglesa", "title": " 🛒 Tienda Inglesa"}
+                        "reply": {"id": "tienda_inglesa", "title": "🛍 Tienda Inglesa"}
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {"id": "listar", "title": "📋 Listar productos"}
                     }
                 ]
             }
