@@ -175,10 +175,16 @@ async def webhook(request: Request):
                     return {"status": "ok"}
 
                 # 🔹 Generar receta normal
-                receta, productos = generar_receta(profile_name, text, return_productos=True)
+                receta_dict, productos = generar_receta(profile_name, text, return_productos=True)
                 user_sessions[from_number] = {"nombre": profile_name, "productos": productos}
-                reply_whatsapp(from_number, receta)
+
+
+                for bloque in [receta_dict["ingredientes"], receta_dict["instrucciones"], receta_dict["precios"]]:
+                    if bloque.strip():
+                        reply_whatsapp(from_number, bloque)
+
                 enviar_botones(from_number, "¿Querés hacer el pedido ahora?")
+
 
             elif message.get("type") == "interactive":
                 button_id = message["interactive"]["button_reply"]["id"]

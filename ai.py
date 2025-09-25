@@ -28,17 +28,13 @@ def obtener_productos():
     return []
 
 
-
 def limpiar_ingrediente(ingrediente: str) -> str:
     """Limpia un ingrediente para mejor matching"""
     original = ingrediente
-
-    # Quitar paréntesis y números
     ingrediente = re.sub(r'\([^)]*\)', '', ingrediente)
     ingrediente = re.sub(r'\d+(?:[.,]\d+)?', '', ingrediente)
     ingrediente = re.sub(r'\d+/\d+', '', ingrediente)
 
-    # Palabras de medidas comunes
     medidas = [
         'taza', 'tazas', 'cucharadita', 'cucharaditas', 'cucharada', 'cucharadas',
         'kg', 'gr', 'g', 'gramos', 'litro', 'litros', 'ml', 'cc', 'pizca',
@@ -47,7 +43,6 @@ def limpiar_ingrediente(ingrediente: str) -> str:
     for m in medidas:
         ingrediente = re.sub(rf'\b{m}s?\b', '', ingrediente, flags=re.IGNORECASE)
 
-    # Palabras de poco valor descriptivo
     conectores = [
         'de', 'del', 'la', 'el', 'en', 'con', 'sin', 'para', 'y', 'al',
         'gusto', 'tibia', 'fría', 'frio', 'caliente', 'fresco', 'seco',
@@ -56,9 +51,7 @@ def limpiar_ingrediente(ingrediente: str) -> str:
     for c in conectores:
         ingrediente = re.sub(rf'\b{c}\b', '', ingrediente, flags=re.IGNORECASE)
 
-    # Limpiar caracteres extraños
     ingrediente = re.sub(r'[/\\(),\s-]+', ' ', ingrediente).strip()
-
     if len(ingrediente) < 3:
         ingrediente = ""
 
@@ -67,9 +60,7 @@ def limpiar_ingrediente(ingrediente: str) -> str:
 
 
 def buscar_por_categoria(ingrediente, productos):
-    """Busca productos por categorías con reglas fijas"""
     ingrediente_lower = ingrediente.lower().strip()
-
     mapeos_exactos = {
         'mantequilla': 'manteca',
         'manteca': 'manteca',
@@ -95,12 +86,7 @@ def buscar_por_categoria(ingrediente, productos):
     if not palabra_buscar:
         return None
 
-    candidatos = []
-    for p in productos:
-        nombre = p["nombre_producto"].lower()
-        if palabra_buscar in nombre:
-            candidatos.append(p)
-
+    candidatos = [p for p in productos if palabra_buscar in p["nombre_producto"].lower()]
     if not candidatos:
         return None
 
@@ -116,22 +102,34 @@ def buscar_por_categoria(ingrediente, productos):
     }
 
 
+def es_no_comestible(nombre: str) -> bool:
+    """Detecta si un producto no es comestible por su nombre"""
+    nombre = nombre.lower()
+
+    # Lista de palabras clave a descartar (puede expandirse según lo que veas en la API)
+    blacklist = [
+        "jabon", "jabón", "detergente", "repelente", "hipoclorito", "lavandina",
+        "pañal", "pañales", "shampoo", "champu", "champú", "talco", "off",
+        "desodorante", "ambientador", "limpiador", "lavavajilla", "suavizante",
+        "perfume", "cera", "insecticida", "foco", "velas", "toallas", "servilleta",
+        "pañuelo", "pasta dental", "pasta de dientes", "colgate", "oral b", "cepillo"
+    ]
+
+    return any(kw in nombre for kw in blacklist)
+
+
 def buscar_precio_producto(ingrediente, productos):
     """Busca un producto con fuzzy matching + categorías"""
     try:
         if not productos:
             return None
 
-        # Filtrar solo alimentos
+        # ✅ Filtrar no comestibles con la función
         productos_validos = [
             p for p in productos
-            if "nombre_producto" in p
-            and not any(
-                kw in p["nombre_producto"].lower()
-                for kw in ["jabon", "detergente", "repelente", "hipoclorito",
-                           "lavandina", "pañal", "shampoo", "talco", "off"]
-            )
+            if "nombre_producto" in p and not es_no_comestible(p["nombre_producto"])
         ]
+
         if not productos_validos:
             return None
 
@@ -139,7 +137,7 @@ def buscar_precio_producto(ingrediente, productos):
         if len(ingrediente_limpio) < 3:
             return None
 
-        # 1. Match por categoría
+        # 1. Match por categoría fija
         resultado = buscar_por_categoria(ingrediente_limpio, productos_validos)
         if resultado:
             return resultado
@@ -151,12 +149,20 @@ def buscar_precio_producto(ingrediente, productos):
             return None
 
         mejor, score, idx = fuzzy
-        if score < 80:  # más permisivo que 90
+        if score < 80:
             return None
 
         producto = productos_validos[idx]
-        precios_disco = [p for p in productos_validos if p["nombre_producto"] == producto["nombre_producto"] and p["supermercado"].lower() == "disco"]
-        precios_ti = [p for p in productos_validos if p["nombre_producto"] == producto["nombre_producto"] and p["supermercado"].lower() == "tienda inglesa"]
+        precios_disco = [
+            p for p in productos_validos
+            if p["nombre_producto"] == producto["nombre_producto"]
+            and p["supermercado"].lower() == "disco"
+        ]
+        precios_ti = [
+            p for p in productos_validos
+            if p["nombre_producto"] == producto["nombre_producto"]
+            and p["supermercado"].lower() == "tienda inglesa"
+        ]
 
         return {
             "nombre": producto["nombre_producto"],
@@ -172,42 +178,56 @@ def buscar_precio_producto(ingrediente, productos):
 
 
 def calcular_unidades(cantidad: float, medida: str, producto_nombre: str):
-    """Calcula cuántas unidades comprar según la presentación"""
-    match = re.search(r"\(([^)]+)\)", producto_nombre.lower())
-    if not match:
-        return 1, int(math.ceil(cantidad))
+    # Captura presentaciones tipo: (400g), (400 g), (1 kg), (500 ml), (1/2 docena), (docena)
+    m = re.search(r"\(([^)]+)\)", producto_nombre.lower())
+    if not m:
+        # ⚠️ Antes devolvía ceil(cantidad) -> eso generaba 400 x precio.
+        return 1, 1
 
-    presentacion = match.group(1)
+    presentacion = m.group(1)
 
-    # Huevos
+    # DOCENA(S)
     if "docena" in presentacion:
         pack = 6 if "1/2" in presentacion else 12
-        unidades = math.ceil(cantidad / pack)
+        # si solo pedís 1 unidad (p.ej. 1 huevo), igual comprás el pack mínimo
+        unidades = 1 if cantidad <= 1 else math.ceil(cantidad / pack)
         return pack, unidades
 
-    # Kilos
+    # Extraer número de la presentación (400, 1, etc.)
+    num = re.search(r"(\d+(?:[.,]\d+)?)", presentacion)
+    valor = float(num.group(1).replace(",", ".")) if num else None
+    if valor is None:
+        return 1, 1  # si no pudimos leer el número, pedimos 1 unidad
+
+    # Normalizar pack a gramos o mililitros donde aplique
+    pack = None
     if "kg" in presentacion:
-        num = re.search(r"(\d+(?:[.,]\d+)?)", presentacion)
-        pack = float(num.group(1).replace(",", ".")) * 1000 if num else 1000
-        if medida in ["kg", "g", "gramos"]:
-            cantidad_g = cantidad * (1000 if medida == "kg" else 1)
-            unidades = math.ceil(cantidad_g / pack)
-        else:
-            unidades = 1
+        pack = valor * 1000  # kg -> g
+        unidad_receta_en_g = (cantidad * 1000) if medida == "kg" else cantidad
+        unidades = 1 if pack >= unidad_receta_en_g else math.ceil(unidad_receta_en_g / pack)
         return pack, unidades
 
-    # Gramos
-    if "gr" in presentacion:
-        num = re.search(r"(\d+(?:[.,]\d+)?)", presentacion)
-        pack = float(num.group(1).replace(",", ".")) if num else 500
-        if medida in ["g", "gramos"]:
-            unidades = math.ceil(cantidad / pack)
-        else:
-            unidades = 1
+    if ("gr" in presentacion) or re.search(r"\b[g]\b", presentacion) or "gramo" in presentacion:
+        pack = valor  # g
+        # receta puede venir en kg o g
+        unidad_receta_en_g = (cantidad * 1000) if medida == "kg" else cantidad
+        unidades = 1 if pack >= unidad_receta_en_g else math.ceil(unidad_receta_en_g / pack)
         return pack, unidades
 
-    return 1, int(math.ceil(cantidad))
+    if "l" in presentacion and "ml" not in presentacion:
+        pack = valor * 1000  # l -> ml
+        unidad_receta_en_ml = (cantidad * 1000) if medida in ["l", "lt"] else cantidad
+        unidades = 1 if pack >= unidad_receta_en_ml else math.ceil(unidad_receta_en_ml / pack)
+        return pack, unidades
 
+    if ("ml" in presentacion) or ("cc" in presentacion):
+        pack = valor  # ml
+        unidad_receta_en_ml = (cantidad * 1000) if medida in ["l", "lt"] else cantidad
+        unidades = 1 if pack >= unidad_receta_en_ml else math.ceil(unidad_receta_en_ml / pack)
+        return pack, unidades
+
+    # Por defecto (presentaciones como "(unidad)", "(frasco)", etc.)
+    return 1, 1
 
 def eliminar_duplicados(productos_pedido):
     for supermercado in productos_pedido:
@@ -223,6 +243,26 @@ def eliminar_duplicados(productos_pedido):
                 productos_unicos[p["nombre"]] = p
         productos_pedido[supermercado] = list(productos_unicos.values())
     return productos_pedido
+
+
+def extraer_utiles_de_instrucciones(instrucciones_lines):
+    texto = " ".join(instrucciones_lines).lower()
+    patrones = {
+        "bol": r"\b(bol|bowl|tazón|tazon)\b",
+        "batidora": r"\b(batidora|batidor|gancho)\b",
+        "molde": r"\b(molde|budinera|panera|tartera)\b",
+        "horno": r"\bhorno\b",
+        "sartén/olla": r"\b(sart[eé]n|olla|cacerola)\b",
+        "rejilla": r"\brejilla\b",
+        "rodillo": r"\b(rodillo|palo de amasar)\b",
+        "espátula": r"\b(espatula|espátula|cuchara de madera)\b"
+    }
+    utiles = []
+    for nombre, patron in patrones.items():
+        if re.search(patron, texto):
+            utiles.append(nombre)
+    return utiles
+
 
 def generar_receta(nombre: str, user_msg: str, usuario_numero=None, return_productos=False):
     print(f"\n🍳 GENERANDO RECETA PARA: {nombre}")
@@ -240,19 +280,29 @@ def generar_receta(nombre: str, user_msg: str, usuario_numero=None, return_produ
         print("✅ Receta generada con IA")
     except Exception as e:
         receta_base = f"⚠️ Error generando receta con IA: {str(e)}"
+        result = {
+            "ingredientes": receta_base,
+            "instrucciones": "",
+            "precios": ""
+        }
         if return_productos:
-            return receta_base, {"disco": [], "tienda_inglesa": []}
-        return receta_base
+            return result, {"disco": [], "tienda_inglesa": []}
+        return result
 
     productos = obtener_productos()
     if not productos:
+        result = {
+            "ingredientes": receta_base,
+            "instrucciones": "",
+            "precios": ""
+        }
         if return_productos:
-            return receta_base, {"disco": [], "tienda_inglesa": []}
-        return receta_base
+            return result, {"disco": [], "tienda_inglesa": []}
+        return result
 
-    # Extraer ingredientes
     ingredientes = []
     en_ing = False
+    instrucciones_lines = []
     for linea in receta_base.splitlines():
         l = linea.lower().strip()
         if "ingredientes" in l and not en_ing:
@@ -262,8 +312,9 @@ def generar_receta(nombre: str, user_msg: str, usuario_numero=None, return_produ
             en_ing = False
         if en_ing and linea.strip() and linea.strip().startswith(("-", "•")):
             ingredientes.append(linea.strip().lstrip("- •").strip())
+        elif not en_ing and linea.strip():
+            instrucciones_lines.append(linea)
 
-    # Buscar precios
     productos_pedido = {"disco": [], "tienda_inglesa": []}
     precios_texto, total_disco, total_ti = [], 0, 0
 
@@ -301,12 +352,28 @@ def generar_receta(nombre: str, user_msg: str, usuario_numero=None, return_produ
 
     productos_pedido = eliminar_duplicados(productos_pedido)
 
-    respuesta = f"👨‍🍳 Receta para {nombre}\n\n{receta_base}"
+    ingredientes_text = f"👨‍🍳 Receta para {nombre}\n\n### Ingredientes:\n"
+    ingredientes_text += "\n".join([f"• {ing}" for ing in ingredientes]) if ingredientes else "No se detectaron ingredientes."
+
+    utiles_list = extraer_utiles_de_instrucciones(instrucciones_lines)
+    utiles_text = ""
+    if utiles_list:
+        utiles_text = "### Útiles de cocina:\n" + "\n".join([f"• {u}" for u in utiles_list]) + "\n\n"
+
+    instrucciones_text = utiles_text + "### Instrucciones:\n" + "\n".join(instrucciones_lines)
+
+    precios_final = ""
     if precios_texto:
-        respuesta += "\n\n**Precios disponibles:**\n" + "\n".join(precios_texto)
-        respuesta += f"\n\n**Total Disco:** ${total_disco:.2f}\n**Total Tienda Inglesa:** ${total_ti:.2f}"
-        respuesta += "\n¿Querés hacer el pedido? Escribí 'tienda inglesa' o 'disco'."
+        precios_final = "\n💲 Precios disponibles:\n" + "\n".join(precios_texto)
+        precios_final += f"\n\n👉 Total Disco: ${total_disco:.2f}\n👉 Total Tienda Inglesa: ${total_ti:.2f}"
+        precios_final += "\n\n¿Querés hacer el pedido? Escribí 'tienda inglesa' o 'disco'."
+
+    result = {
+        "ingredientes": ingredientes_text,
+        "instrucciones": instrucciones_text,
+        "precios": precios_final
+    }
 
     if return_productos:
-        return respuesta, productos_pedido
-    return respuesta
+        return result, productos_pedido
+    return result
